@@ -1,0 +1,14 @@
+fastapi
+uvicorn
+openai
+pydantic
+python-docx
+xhtml2pdf
+python-dotenv
+requests
+beautifulsoup4
+googlesearch-python
+streamlit
+markdown
+python-multipart
+fastapi-mail
