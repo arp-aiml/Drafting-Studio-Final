@@ -1,24 +1,31 @@
 # app/utils/retrieval.py
-import numpy as np
 from app.utils.chunk_and_index import load_faiss_index
-from app.utils.legal_embeddings import embed_text
+import numpy as np
 
-# Load FAISS index once
-INDEX, METADATA = load_faiss_index()
-
-def retrieve_top_k_chunks(query: str, k: int = 5):
+def retrieve_top_k_chunks(query: str, k: int = 5, doc_hash: str = None, index=None, metadata=None):
     """
-    Returns top-k most relevant document chunks for a query
+    Retrieve top-k most relevant chunks from a document's FAISS index.
+
+    - If `doc_hash` is provided, it loads the FAISS index for that document.
+    - Otherwise, you can pass `index` and `metadata` directly.
     """
-    if INDEX is None or METADATA is None:
-        return []
+    # 1️⃣ Load per-document index if not provided
+    if index is None or metadata is None:
+        if doc_hash is None:
+            raise ValueError("Either index/metadata or doc_hash must be provided")
+        index, metadata = load_faiss_index(doc_hash)
+        if index is None or metadata is None:
+            return []
 
-    query_vec = embed_text(query).reshape(1, -1)
-    distances, indices = INDEX.search(query_vec, k)
+    # 2️⃣ Embed the query
+    from app.utils.legal_embeddings import embed_text
+    query_vec = embed_text(query).reshape(1, -1).astype(np.float32)
 
+    # 3️⃣ Search FAISS
+    D, I = index.search(query_vec, k)
     results = []
-    for idx in indices[0]:
-        if idx < len(METADATA):
-            results.append(METADATA[idx]["text"])
+    for i in I[0]:
+        if i < len(metadata):
+            results.append(metadata[i]["text"])
 
     return results
