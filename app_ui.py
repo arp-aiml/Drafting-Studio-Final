@@ -1,13 +1,13 @@
+# app_ui.py
 import streamlit as st
 import requests
 from app.utils.file_handler import read_file_content
 
-# URL Matches Backend Prefix
 API_URL = "http://127.0.0.1:8000/draft"
 
 st.set_page_config(page_title="LexFlow Studio", layout="wide", page_icon="⚖️")
 
-# --- CUSTOM CSS ---
+# ===================== CSS =====================
 st.markdown("""
 <style>
     .stTextArea textarea {
@@ -19,195 +19,256 @@ st.markdown("""
         border: 1px solid #ccc;
     }
     .main { background-color: #f9f9f9; }
-    div[data-testid="stExpander"] details summary {
-        font-weight: bold;
-    }
 </style>
 """, unsafe_allow_html=True)
 
 st.title("⚖️ LexFlow AI - Drafting Studio")
 
-# --- INITIALIZE STATE ---
-if 'draft' not in st.session_state: st.session_state['draft'] = ""
-if 'research' not in st.session_state: st.session_state['research'] = ""
-if 'warnings' not in st.session_state: st.session_state['warnings'] = []
-if 'case_law_suggestions' not in st.session_state: st.session_state['case_law_suggestions'] = ""
+# ===================== STATE =====================
+defaults = {
+    "draft": "",
+    "warnings": [],
+    "case_law_suggestions": "",
+    "doc_analysis": None,
+    "client_name": "",
+    "opposite_party": "",
+    "facts": "",
+    "document_title": ""
+}
 
-# --- HELPER FUNCTIONS ---
+if "populate_from_doc" not in st.session_state:
+    st.session_state["populate_from_doc"] = False
 
-def force_refresh_editor(new_text):
-    """Updates the state and reruns the app (No Key = No Conflict)."""
-    st.session_state['draft'] = new_text
+for k, v in defaults.items():
+    if k not in st.session_state:
+        st.session_state[k] = v
+
+# ===================== HELPERS =====================
+def force_refresh_editor(new_text=""):
+    st.session_state["draft"] = new_text
     st.rerun()
 
 def apply_global_refinement(instruction):
-    """Sends the WHOLE draft for refinement."""
-    current_text = st.session_state.get('draft', "")
-    if not current_text:
-        st.toast("⚠️ Editor is empty!")
+    if not st.session_state["draft"]:
+        st.toast("⚠️ Editor is empty")
         return
-    
-    with st.spinner(f"Refining ({instruction})..."):
-        try:
-            res = requests.post(f"{API_URL}/refine", json={"selected_text": current_text, "instruction": instruction})
-            if res.status_code == 200:
-                force_refresh_editor(res.json()['refined_content'])
-                st.toast("✅ Document Refined!")
-            else:
-                st.error("Refinement Failed")
-        except Exception as e:
-            st.error(f"Error: {e}")
+    try:
+        res = requests.post(
+            f"{API_URL}/refine",
+            json={"selected_text": st.session_state["draft"], "instruction": instruction},
+            timeout=300
+        )
+        if res.status_code == 200:
+            force_refresh_editor(res.json()["refined_content"])
+        else:
+            st.error(f"Refinement failed: {res.text}")
+    except requests.exceptions.RequestException as e:
+        st.error(f"Error: {e}")
 
 def fetch_case_laws():
-    """Fetches Laws & Case Laws."""
-    current_text = st.session_state.get('draft', "")
-    if not current_text:
-        st.toast("⚠️ Draft is empty.")
+    if not st.session_state["draft"]:
         return
+    try:
+        res = requests.post(
+            f"{API_URL}/suggest-cases",
+            json={"content": st.session_state["draft"]},
+            timeout=300
+        )
+        if res.status_code == 200:
+            st.session_state["case_law_suggestions"] = res.json().get("suggestions", "")
+            st.rerun()
+        else:
+            st.error(f"Case law fetch failed: {res.text}")
+    except requests.exceptions.RequestException as e:
+        st.error(f"Error: {e}")
 
-    with st.spinner("🕵️ Finding Relevant Sections & Cases..."):
-        try:
-            res = requests.post(f"{API_URL}/suggest-cases", json={"content": current_text})
-            if res.status_code == 200:
-                st.session_state['case_law_suggestions'] = res.json()['suggestions']
-                st.rerun() 
-            else:
-                st.error("Failed to fetch research.")
-        except Exception as e:
-            st.error(f"Error: {e}")
-
-# ================= LAYOUT =================
+# ===================== LAYOUT =====================
 col_left, col_center, col_right = st.columns([1, 2, 1])
 
-# --- 1. LEFT SIDEBAR: INPUTS ---
+# ===================== LEFT =====================
 with col_left:
     st.header("1. Setup")
-    
-    draft_mode = st.radio("Source:", ["New Draft", "Upload Template (RAG)"], horizontal=True)
-    
+
+    # ===================== AUTO-POPULATE FROM DOCUMENT =====================
+    if st.session_state.get("populate_from_doc") and st.session_state.get("doc_analysis"):
+        d = st.session_state["doc_analysis"]
+        st.session_state["client_name"] = d.get("receiver_party") or ""
+        st.session_state["opposite_party"] = d.get("sender_party") or ""
+        st.session_state["facts"] = "\n".join(d.get("key_points", []))
+        st.session_state["draft"] = ""
+        st.session_state["populate_from_doc"] = False
+
+    # ===================== SIDEBAR UI =====================
+    draft_mode = st.radio("Source", ["New Draft", "Upload Template (RAG)"], horizontal=True)
     uploaded_text = ""
+
     if draft_mode == "Upload Template (RAG)":
-        uploaded_file = st.file_uploader("Upload .docx or .pdf", type=["docx", "pdf", "txt"])
+        uploaded_file = st.file_uploader("Upload Legal Document", type=["docx", "pdf", "txt"])
         if uploaded_file:
             uploaded_text = read_file_content(uploaded_file)
-            st.success(f"✅ Loaded {len(uploaded_text)} chars")
+            st.success(f"Loaded {len(uploaded_text)} characters")
 
-    template_type = st.selectbox("Document Type", [
-        "gst_show_cause_reply", "nda", "employment_contract", 
-        "lease_deed", "commercial_agreement"
-    ], key="doc_selector")
-    
-    client_name = st.text_input("Client Name", "Apex Corp", key="client_input")
-    opposite_party = st.text_input("Opposite Party", "The Authority", key="opp_party_input")
-    facts = st.text_area("Facts / Instructions", height=150, key="facts_input")
-    tone = st.selectbox("Tone", ["Formal", "Persuasive", "Firm"], key="tone_input")
+            if st.button("🔍 Analyze Document"):
+                uploaded_file.seek(0)
+                with st.spinner("Analyzing document..."):
+                    try:
+                        res = requests.post(
+                            f"{API_URL}/analyze-document",
+                            files={"file": (uploaded_file.name, uploaded_file.getvalue())},
+                            timeout=600  # generous timeout
+                        )
+                        if res.status_code == 200:
+                            st.session_state["doc_analysis"] = res.json()
+                            st.toast("Document analyzed successfully")
+                        else:
+                            st.error(f"Analysis failed: {res.text}")
+                    except requests.exceptions.RequestException as e:
+                        st.error(f"Error analyzing document: {e}")
+
+    template_type = st.selectbox(
+        "Document Type",
+        ["gst_show_cause_reply", "nda", "employment_contract", "lease_deed", "commercial_agreement"]
+    )
+
+    st.text_input("Client Name", key="client_name")
+    st.text_input("Opposite Party", key="opposite_party")
+    st.text_area("Facts / Instructions", height=180, key="facts")
+    tone = st.selectbox("Tone", ["Formal", "Persuasive", "Firm"])
 
     if st.button("✨ Generate Draft", type="primary"):
-        with st.spinner("🤖 Drafting..."):
-            payload = {
-                "template_type": template_type,
-                "client_name": client_name,
-                "opposite_party": opposite_party,
-                "facts": facts,
-                "tone": tone,
-                "template_text": uploaded_text
-            }
-            try:
-                res = requests.post(f"{API_URL}/generate", json=payload)
-                if res.status_code == 200:
-                    data = res.json()
-                    st.session_state['research'] = data.get('research_note', "")
-                    st.session_state['warnings'] = data.get('warnings', [])
-                    force_refresh_editor(data['content'])
-                else:
-                    st.error(f"Error: {res.text}")
-            except Exception as e:
-                st.error(f"Connection Error: {e}")
+        payload = {
+            "template_type": template_type,
+            "client_name": st.session_state["client_name"],
+            "opposite_party": st.session_state["opposite_party"],
+            "facts": st.session_state["facts"],
+            "tone": tone
+        }
+        try:
+            res = requests.post(f"{API_URL}/generate", json=payload, timeout=600)
+            if res.status_code == 200:
+                data = res.json()
+                st.session_state["warnings"] = data.get("warnings", [])
+                force_refresh_editor(data["content"])
+            else:
+                st.error(f"Draft generation failed: {res.text}")
+        except requests.exceptions.RequestException as e:
+            st.error(f"Error generating draft: {e}")
 
-# --- 2. CENTER: EDITOR ---
+# ===================== DOCUMENT INTELLIGENCE =====================
+if st.session_state.get("doc_analysis"):
+    d = st.session_state["doc_analysis"]
+
+    meta = d.get("document_metadata", {})
+    key_points = d.get("key_points_summary", [])
+    defence = d.get("defence_preparation_checklist", [])
+    legality = d.get("legality_assessment", {})
+    cases = d.get("relevant_judicial_precedents", [])
+
+    with st.expander("📄 Document Intelligence", expanded=True):
+        st.markdown(f"### {meta.get('document_title') or 'Uploaded Legal Notice'}")
+        st.write("**Document Type:**", meta.get("document_type") or "Not identified")
+        st.write("**Issued By / Court:**", meta.get("issuing_authority_or_court") or "Not identified")
+        st.write("**Addressed To:**", meta.get("addressed_to") or "Not identified")
+
+        other_parties = meta.get("other_parties_involved", [])
+        if other_parties:
+            st.write("**Other Parties:**", ", ".join(other_parties))
+
+        st.markdown("### 🧾 Key Points / Summary")
+        if key_points:
+            for p in key_points:
+                st.write(f"- {p}")
+        else:
+            st.info("No key points identified.")
+
+        st.markdown("### 🗂 Defence Preparation Checklist")
+        if defence:
+            for item in defence:
+                st.write(f"- {item}")
+        else:
+            st.info("No defence checklist items identified.")
+
+        st.markdown("### ⚠️ Notice Legality Assessment")
+        is_valid = legality.get("is_notice_legally_valid")
+        authority_error = legality.get("authority_error_possible")
+        party_fault = legality.get("party_non_compliance_possible")
+        risk = legality.get("overall_risk_level")
+        defects = legality.get("identified_issues_or_defects", [])
+
+        if is_valid is False:
+            st.error("⚠️ The notice appears to suffer from legal/procedural defects.")
+        elif is_valid is True:
+            st.success("✅ The notice appears legally valid.")
+        else:
+            st.info("ℹ️ Cannot conclusively determine legality from text alone.")
+
+        if authority_error:
+            st.warning("⚖️ Possible issuing authority error.")
+        if party_fault:
+            st.warning("📌 Possible non-compliance by noticee.")
+
+        if risk:
+            if risk.lower() == "high":
+                st.error(f"Overall Risk Level: {risk.upper()}")
+            elif risk.lower() == "medium":
+                st.warning(f"Overall Risk Level: {risk.upper()}")
+            else:
+                st.success(f"Overall Risk Level: {risk.upper()}")
+
+        if defects:
+            st.markdown("**Identified Issues:**")
+            for issue in defects:
+                st.warning(issue)
+
+        # ---------- Judicial Precedents ----------
+        st.markdown("### ⚖️ Relevant Judicial Precedents")
+        if cases:
+            for case in cases:
+                st.markdown(
+                    f"**{case.get('case_name', 'Unnamed Case')} – {case.get('court', '—')}**\n"
+                    f"• Legal Principle: {case.get('legal_principle', 'Not specified')}\n"
+                    f"• Relevance: {case.get('relevance_to_present_document', 'Not specified')}"
+                )
+        else:
+            st.info("No relevant judicial precedents found.")
+
+        if st.button("🪄 Use Key Points as Facts"):
+            st.session_state.populate_from_doc = True
+            st.toast("Populating sidebar fields…")
+            st.rerun()
+
+
+# ===================== CENTER =====================
 with col_center:
     st.subheader("📝 Editor Workspace")
+    if st.session_state["warnings"]:
+        with st.expander("⚠️ Compliance Checks"):
+            for w in st.session_state["warnings"]:
+                st.warning(w)
 
-    if st.session_state['warnings']:
-        with st.expander("⚠️ Compliance Checks", expanded=False):
-            for w in st.session_state['warnings']: st.warning(w)
+    if st.session_state["case_law_suggestions"]:
+        st.info(st.session_state["case_law_suggestions"])
 
-    # RELEVANT LAWS SECTION (UPDATED)
-    if st.session_state['case_law_suggestions']:
-        st.info(f"📚 **Legal Authorities Found:**\n\n{st.session_state['case_law_suggestions']}")
-        
-        # INSERT BUTTON
-        if st.button("📥 Insert Authorities into Draft"):
-             force_refresh_editor(st.session_state['draft'] + "\n\n### Legal Authorities & Precedents\n" + st.session_state['case_law_suggestions'])
-
-    # MAIN EDITOR WIDGET
     draft_content = st.text_area(
-        "Draft", 
-        value=st.session_state['draft'], 
-        height=650
+        "Draft",
+        value=st.session_state["draft"],
+        height=1000
     )
-    
-    if draft_content != st.session_state['draft']:
-        st.session_state['draft'] = draft_content
+    if draft_content != st.session_state["draft"]:
+        st.session_state["draft"] = draft_content
 
-    c1, c2, c3 = st.columns(3)
-    with c1: 
-        if st.button("💾 Save"): st.toast("Draft Saved!")
-    with c2: 
-        if st.button("📄 Word"):
-             res = requests.post(f"{API_URL}/export/word", json={"content": st.session_state['draft']})
-             st.download_button("Download Docx", res.content, "Draft.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
-    with c3:
-        if st.button("📕 PDF"):
-             res = requests.post(f"{API_URL}/export/pdf", json={"content": st.session_state['draft']})
-             st.download_button("Download PDF", res.content, "Draft.pdf", "application/pdf")
-
-# --- 3. RIGHT SIDEBAR: TOOLS ---
+# ===================== RIGHT =====================
 with col_right:
     st.header("⚡ Tools")
-    
-    st.markdown("### ✨ AI Refinement")
-    col_r1, col_r2 = st.columns(2)
-    with col_r1:
-        if st.button("💪 Stronger"):
-            apply_global_refinement("Make the legal language stronger and more protective.")
-    with col_r2:
-        if st.button("🤝 Polite"):
-            apply_global_refinement("Make the tone more collaborative and polite.")
-            
-    col_r3, col_r4 = st.columns(2)
-    with col_r3:
-        if st.button("📉 Simplify"):
-            apply_global_refinement("Simplify the language for a layperson.")
-    with col_r4:
-        if st.button("⚖️ Legalese"):
-            apply_global_refinement("Correct any improper legal terminology.")
+    if st.button("💪 Stronger"):
+        apply_global_refinement("Make the legal language stronger.")
+    if st.button("🤝 Polite"):
+        apply_global_refinement("Make the tone more polite.")
+    if st.button("📉 Simplify"):
+        apply_global_refinement("Simplify the language.")
+    if st.button("⚖️ Legalese"):
+        apply_global_refinement("Correct legal terminology.")
 
     st.divider()
-
-    # UPDATED BUTTON LABEL
-    st.markdown("### 📚 Legal Research")
     if st.button("🔍 Suggest Laws & Cases"):
-        fetch_case_laws() 
-
-    st.divider()
-    
-    st.markdown("### 📌 Append Clause")
-    if st.button("🛡️ Indemnity"):
-        force_refresh_editor(st.session_state['draft'] + "\n\n### Indemnity\nThe Party shall indemnify, defend, and hold harmless the other Party from all claims, losses, and damages arising from breach of this Agreement.")
-        
-    if st.button("🛑 Termination"):
-        force_refresh_editor(st.session_state['draft'] + "\n\n### Termination\nEither Party may terminate this Agreement with 30 days' prior written notice to the other Party.")
-        
-    if st.button("⚖️ Dispute Resolution"):
-        force_refresh_editor(st.session_state['draft'] + "\n\n### Dispute Resolution\nAny dispute arising out of this Agreement shall be referred to arbitration in accordance with the Arbitration and Conciliation Act, 1996.")
-
-    st.divider()
-    
-    with st.expander("📧 Email Client"):
-        recipient = st.text_input("To:", key="email_to")
-        subj = st.text_input("Subject:", "Legal Draft", key="email_sub")
-        if st.button("Send Email"):
-             if recipient:
-                requests.post(f"{API_URL}/send-email", json={"recipient": recipient, "subject": subj, "content": st.session_state['draft']})
-                st.success("Email Sent!")
+        fetch_case_laws()

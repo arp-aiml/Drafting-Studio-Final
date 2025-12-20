@@ -1,11 +1,11 @@
+#main.py
 from fastapi import FastAPI
-from app.routers import drafting
-import uvicorn
+from app.routers.drafting import router as drafting_router
 
-app = FastAPI(title="LexFlow AI Backend")
+app = FastAPI(title="Drafting Studio API")
 
-# Include the router. The prefix "/draft" is handled inside drafting.py
-app.include_router(drafting.router)
+app.include_router(drafting_router)
 
-if __name__ == "__main__":
-    uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=True)
+@app.get("/")
+def health_check():
+    return {"status": "running"}

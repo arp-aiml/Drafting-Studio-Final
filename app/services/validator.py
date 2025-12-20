@@ -8,7 +8,13 @@ def validate_draft(text: str, template_type: str):
     
     # 1. Define Mandatory Keywords for each Document Type
     rules = {
-        "gst_show_cause_reply": ["Subject", "Facts", "Submission", "Prayer"],
+        "gst_show_cause_reply": [
+            "Introduction of the Noticee",
+            "Brief Summary of the Notice",
+            "Point-wise Reply",
+            "Legality of the Demand",
+            "Closing Submissions"
+        ],
         "gst_appeal": ["Grounds of Appeal", "Statement of Facts", "Relief", "Verification"],
         "tax_scrutiny_reply": ["Subject", "Reference", "Reply", "Prayer"],
         "nda": ["Confidential Information", "Obligations", "Exclusions", "Term", "Indemnity"],
