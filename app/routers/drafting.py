@@ -29,17 +29,17 @@ class CaseLawRequest(BaseModel):
 # =========================
 @router.post("/analyze-document")
 async def analyze_document(file: UploadFile = File(...)):
-    # 1️⃣ Read file safely
+    import asyncio
+
     document_text = read_file_content(file)
     clean_text = document_text.replace("\x00", "").strip()
 
     if len(clean_text) < 50:
         raise HTTPException(
             status_code=400,
-            detail="This PDF cannot be read programmatically. Please upload a standard text-based PDF."
+            detail="This PDF cannot be read programmatically."
         )
 
-    # 2️⃣ FAISS indexing (per file, isolated)
     suffix = os.path.splitext(file.filename)[1] or ".txt"
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
         tmp.write(clean_text.encode("utf-8"))
@@ -47,20 +47,19 @@ async def analyze_document(file: UploadFile = File(...)):
 
     try:
         doc_hash = build_index_from_file(temp_path)
+        if not doc_hash:
+            raise HTTPException(
+                status_code=400,
+                detail="No readable text to index. Analysis aborted."
+            )
     finally:
         os.unlink(temp_path)
 
-    # Load the per-file FAISS index
-    if doc_hash:
-        index, metadata = load_faiss_index(doc_hash)
-    else:
-        index, metadata = None, None
-
-    # 3️⃣ LLM legal analysis
-    analysis_model = await analyze_legal_document(clean_text)
+    # Pass doc_hash to LLM analysis
+    analysis_model = await analyze_legal_document(clean_text, doc_hash=doc_hash)
     analysis = jsonable_encoder(analysis_model)
 
-    # 4️⃣ Optional enrichment (safe)
+    # Safe enrichment
     try:
         scraped = await asyncio.to_thread(
             scrape_legal_context,
@@ -74,6 +73,7 @@ async def analyze_document(file: UploadFile = File(...)):
         pass
 
     return analysis
+
 
 
 # =========================

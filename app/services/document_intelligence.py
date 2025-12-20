@@ -1,4 +1,4 @@
-#document_intelligence.py
+# document_intelligence.py
 import os
 import json
 import re
@@ -15,10 +15,11 @@ MODEL_NAME = "gpt-4o-mini"
 
 MAX_LLM_CHARS = 6000
 
-async def analyze_legal_document(document_text: str):
+async def analyze_legal_document(document_text: str, doc_hash: str = None):
     """
     Legal analysis using embedded document chunks (RAG).
     Handles large documents safely.
+    If doc_hash is provided, retrieves only from that document's index.
     """
     try:
         # -----------------------------
@@ -29,7 +30,11 @@ async def analyze_legal_document(document_text: str):
 
         # ✅ Only use RAG if document has meaningful text
         if len(document_text.strip()) > 200:
-            retrieved_chunks = retrieve_top_k_chunks(query=query_text, k=5)
+            retrieved_chunks = retrieve_top_k_chunks(
+                query=query_text,
+                k=5,
+                doc_hash=doc_hash  # now per-file retrieval
+            )
 
         context = "\n\n".join(retrieved_chunks)
 
@@ -43,10 +48,9 @@ async def analyze_legal_document(document_text: str):
             # fallback to first 3k chars
             context = document_text[:3000]
 
-    # -----------------------------
-    # 2️⃣ SYSTEM PROMPT
-    # -----------------------------
-
+        # -----------------------------
+        # 2️⃣ SYSTEM PROMPT
+        # -----------------------------
         system_prompt = """
 You are a Senior Indian Litigation and Defence Lawyer.
 
@@ -107,6 +111,9 @@ ANALYSIS RULES
 - Do NOT write explanations outside JSON
 """
 
+        # -----------------------------
+        # 3️⃣ LLM CALL
+        # -----------------------------
         try:
             response = await asyncio.to_thread(
                 client.chat.completions.create,
