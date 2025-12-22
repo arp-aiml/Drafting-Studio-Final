@@ -5,6 +5,8 @@ from app.routers.drafting import router as drafting_router
 app = FastAPI(title="Drafting Studio API")
 
 app.include_router(drafting_router)
+app.include_router(drafting_router, prefix="/draft")  
+
 
 @app.get("/")
 def health_check():

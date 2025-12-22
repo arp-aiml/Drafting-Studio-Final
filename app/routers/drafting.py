@@ -1,5 +1,5 @@
 #drafting.py
-from fastapi import APIRouter, Response, HTTPException, UploadFile, File
+from fastapi import APIRouter, Response, HTTPException, UploadFile, File, Body
 from pydantic import BaseModel
 import os
 import tempfile
@@ -13,7 +13,7 @@ from app.services.validator import validate_draft
 from app.services.email_engine import send_draft_email
 from app.services.document_intelligence import analyze_legal_document
 from app.utils.file_handler import read_file_content
-from app.utils.chunk_and_index import build_index_from_file, load_faiss_index
+from app.utils.chunk_and_index import build_index_from_text
 from app.utils.retrieval import retrieve_top_k_chunks
 from app.services.scraper import scrape_legal_context
 
@@ -29,8 +29,8 @@ class CaseLawRequest(BaseModel):
 # =========================
 @router.post("/analyze-document")
 async def analyze_document(file: UploadFile = File(...)):
-    import asyncio
 
+    # 1️⃣ Parse ONCE
     document_text = read_file_content(file)
     clean_text = document_text.replace("\x00", "").strip()
 
@@ -40,26 +40,26 @@ async def analyze_document(file: UploadFile = File(...)):
             detail="This PDF cannot be read programmatically."
         )
 
-    suffix = os.path.splitext(file.filename)[1] or ".txt"
-    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-        tmp.write(clean_text.encode("utf-8"))
-        temp_path = tmp.name
+    # 2️⃣ Index DIRECTLY from TEXT (NO temp PDF nonsense)
+    doc_hash = build_index_from_text(
+        clean_text,
+        source_name=file.filename
+    )
 
-    try:
-        doc_hash = build_index_from_file(temp_path)
-        if not doc_hash:
-            raise HTTPException(
-                status_code=400,
-                detail="No readable text to index. Analysis aborted."
-            )
-    finally:
-        os.unlink(temp_path)
+    if not doc_hash:
+        raise HTTPException(
+            status_code=400,
+            detail="Indexing failed: empty document."
+        )
 
-    # Pass doc_hash to LLM analysis
-    analysis_model = await analyze_legal_document(clean_text, doc_hash=doc_hash)
+    # 3️⃣ LLM analysis (doc_hash aware)
+    analysis_model = await analyze_legal_document(
+        clean_text,
+        doc_hash=doc_hash
+    )
     analysis = jsonable_encoder(analysis_model)
 
-    # Safe enrichment
+    # 4️⃣ Optional enrichment (never crash)
     try:
         scraped = await asyncio.to_thread(
             scrape_legal_context,
@@ -72,7 +72,11 @@ async def analyze_document(file: UploadFile = File(...)):
     except Exception:
         pass
 
-    return analysis
+    return {
+        **analysis,
+        "doc_hash": doc_hash
+    }
+
 
 
 
@@ -87,8 +91,25 @@ async def embed_document(file: UploadFile = File(...)):
     if len(clean_text) < 50:
         raise HTTPException(400, "No readable text found in document")
 
-    doc_hash = build_index_from_file(
-        file_path=tempfile.NamedTemporaryFile(delete=False).name
+    doc_hash = build_index_from_text(
+        clean_text,
+        source_name=file.filename
     )
 
     return {"status": "embedded", "doc_hash": doc_hash}
+
+
+@router.post("/generate")
+async def generate_draft_endpoint(data: DraftRequest = Body(...)):
+    """
+    Generates a legal draft based on template, client, opposite party, facts, and tone.
+    """
+    try:
+        # 1️⃣ Generate draft using AI engine
+        draft_data = await generate_legal_draft(data)  # only `data` argument
+
+        # 2️⃣ draft_data already includes warnings from validate_draft inside AI engine
+        return draft_data
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

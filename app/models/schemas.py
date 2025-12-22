@@ -8,6 +8,7 @@ class DraftRequest(BaseModel):
     facts: str
     tone: str
     template_text: Optional[str] = None 
+    doc_hash: Optional[str] = None
 
 class RefineRequest(BaseModel):
     selected_text: str

@@ -5,13 +5,12 @@ import pytesseract
 from pdf2image import convert_from_bytes
 import pdfplumber
 
-MIN_TEXT_LEN = 50
+MIN_TEXT_LEN = 20  # Lowered threshold
 
 def ocr_pdf(file_bytes: bytes) -> str:
     try:
         images = convert_from_bytes(file_bytes)
     except Exception:
-        # 🔇 absolutely silent
         return ""
 
     text = ""
@@ -24,11 +23,12 @@ def ocr_pdf(file_bytes: bytes) -> str:
     return text.strip()
 
 
-def read_file_content(uploaded_file) -> str:
+def read_file_content(uploaded_file, force_ocr: bool = False) -> str:
     """
-    NEVER throws
-    NEVER crashes
-    Returns "" if unreadable
+    Extract text from uploaded file.
+
+    - Primary extraction first
+    - OCR fallback only if primary fails OR force_ocr=True
     """
 
     if uploaded_file is None:
@@ -48,30 +48,30 @@ def read_file_content(uploaded_file) -> str:
     except Exception:
         return ""
 
-    # ---------- DOCX ----------
+    text = ""
+
+    # DOCX
     if filename.endswith(".docx"):
         try:
             doc = docx.Document(BytesIO(raw_bytes))
-            return "\n".join(p.text for p in doc.paragraphs if p.text.strip())
+            text = "\n".join(p.text for p in doc.paragraphs if p.text.strip())
         except Exception:
-            return ""
+            text = ""
 
-    # ---------- TXT ----------
-    if filename.endswith(".txt"):
+    # TXT
+    elif filename.endswith(".txt"):
         try:
-            return raw_bytes.decode("utf-8", errors="ignore")
+            text = raw_bytes.decode("utf-8", errors="ignore")
         except Exception:
-            return ""
+            text = ""
 
-    # ---------- PDF ----------
-    if filename.endswith(".pdf"):
-        text = ""
-
-        # 🚫 HARD GUARD: non-PDF container (FORM / binary junk)
+    # PDF
+    elif filename.endswith(".pdf"):
+        # HARD GUARD
         if not raw_bytes.startswith(b"%PDF"):
             return ""
 
-        # 1️⃣ pdfplumber ONLY (skip PyPDF completely)
+        # 1️⃣ pdfplumber primary
         try:
             with pdfplumber.open(BytesIO(raw_bytes)) as pdf:
                 for page in pdf.pages:
@@ -79,17 +79,11 @@ def read_file_content(uploaded_file) -> str:
                     if extracted:
                         text += extracted + "\n"
         except Exception:
-            pass
+            text = ""
 
-        if len(text.strip()) >= MIN_TEXT_LEN:
-            return text.strip()
+        # 2️⃣ Fallback OCR if not enough text or force_ocr
+        if force_ocr or len(text.strip()) < MIN_TEXT_LEN:
+            text = ocr_pdf(raw_bytes)
 
-        # 2️⃣ OCR fallback (best effort)
-        text = ocr_pdf(raw_bytes)
-
-        if len(text.strip()) >= MIN_TEXT_LEN:
-            return text.strip()
-
-        return ""
-
-    return ""
+    # Return if enough text
+    return text.strip() if len(text.strip()) >= MIN_TEXT_LEN else ""

@@ -1,11 +1,20 @@
 # app_ui.py
+import os
+import json
+import pickle
 import streamlit as st
 import requests
 from app.utils.file_handler import read_file_content
 
 API_URL = "http://127.0.0.1:8000/draft"
+INDEX_DATA_DIR = "index_data"
+METADATA_FILE = os.path.join(INDEX_DATA_DIR, "metadata.pkl")
+
 
 st.set_page_config(page_title="LexFlow Studio", layout="wide", page_icon="⚖️")
+
+def populate_facts_from_keypoints(key_points):
+    st.session_state.facts = "\n".join(key_points)
 
 # ===================== CSS =====================
 st.markdown("""
@@ -22,137 +31,32 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+st.title("⚖️ LexFlow AI - Upload and Analyze")
+
+uploaded_file = st.file_uploader("Upload Legal Document for Analysis", type=["docx", "pdf", "txt"])
+if uploaded_file:
+    uploaded_text = read_file_content(uploaded_file)
+    st.success(f"Loaded {len(uploaded_text)} characters")
+
+    if st.button("🔍 Analyze Document"):
+        uploaded_file.seek(0)
+        with st.spinner("Analyzing document..."):
+            try:
+                res = requests.post(
+                    f"{API_URL}/analyze-document",
+                    files={"file": (uploaded_file.name, uploaded_file.getvalue())},
+                    timeout=600
+                )
+                if res.status_code == 200:
+                    st.session_state["doc_analysis"] = res.json()
+                    st.toast("Document analyzed successfully")
+                else:
+                    st.error(f"Analysis failed: {res.text}")
+            except requests.exceptions.RequestException as e:
+                st.error(f"Error analyzing document: {e}")
+
 st.title("⚖️ LexFlow AI - Drafting Studio")
 
-# ===================== STATE =====================
-defaults = {
-    "draft": "",
-    "warnings": [],
-    "case_law_suggestions": "",
-    "doc_analysis": None,
-    "client_name": "",
-    "opposite_party": "",
-    "facts": "",
-    "document_title": ""
-}
-
-if "populate_from_doc" not in st.session_state:
-    st.session_state["populate_from_doc"] = False
-
-for k, v in defaults.items():
-    if k not in st.session_state:
-        st.session_state[k] = v
-
-# ===================== HELPERS =====================
-def force_refresh_editor(new_text=""):
-    st.session_state["draft"] = new_text
-    st.rerun()
-
-def apply_global_refinement(instruction):
-    if not st.session_state["draft"]:
-        st.toast("⚠️ Editor is empty")
-        return
-    try:
-        res = requests.post(
-            f"{API_URL}/refine",
-            json={"selected_text": st.session_state["draft"], "instruction": instruction},
-            timeout=300
-        )
-        if res.status_code == 200:
-            force_refresh_editor(res.json()["refined_content"])
-        else:
-            st.error(f"Refinement failed: {res.text}")
-    except requests.exceptions.RequestException as e:
-        st.error(f"Error: {e}")
-
-def fetch_case_laws():
-    if not st.session_state["draft"]:
-        return
-    try:
-        res = requests.post(
-            f"{API_URL}/suggest-cases",
-            json={"content": st.session_state["draft"]},
-            timeout=300
-        )
-        if res.status_code == 200:
-            st.session_state["case_law_suggestions"] = res.json().get("suggestions", "")
-            st.rerun()
-        else:
-            st.error(f"Case law fetch failed: {res.text}")
-    except requests.exceptions.RequestException as e:
-        st.error(f"Error: {e}")
-
-# ===================== LAYOUT =====================
-col_left, col_center, col_right = st.columns([1, 2, 1])
-
-# ===================== LEFT =====================
-with col_left:
-    st.header("1. Setup")
-
-    # ===================== AUTO-POPULATE FROM DOCUMENT =====================
-    if st.session_state.get("populate_from_doc") and st.session_state.get("doc_analysis"):
-        d = st.session_state["doc_analysis"]
-        st.session_state["client_name"] = d.get("receiver_party") or ""
-        st.session_state["opposite_party"] = d.get("sender_party") or ""
-        st.session_state["facts"] = "\n".join(d.get("key_points", []))
-        st.session_state["draft"] = ""
-        st.session_state["populate_from_doc"] = False
-
-    # ===================== SIDEBAR UI =====================
-    draft_mode = st.radio("Source", ["New Draft", "Upload Template (RAG)"], horizontal=True)
-    uploaded_text = ""
-
-    if draft_mode == "Upload Template (RAG)":
-        uploaded_file = st.file_uploader("Upload Legal Document", type=["docx", "pdf", "txt"])
-        if uploaded_file:
-            uploaded_text = read_file_content(uploaded_file)
-            st.success(f"Loaded {len(uploaded_text)} characters")
-
-            if st.button("🔍 Analyze Document"):
-                uploaded_file.seek(0)
-                with st.spinner("Analyzing document..."):
-                    try:
-                        res = requests.post(
-                            f"{API_URL}/analyze-document",
-                            files={"file": (uploaded_file.name, uploaded_file.getvalue())},
-                            timeout=600  # generous timeout
-                        )
-                        if res.status_code == 200:
-                            st.session_state["doc_analysis"] = res.json()
-                            st.toast("Document analyzed successfully")
-                        else:
-                            st.error(f"Analysis failed: {res.text}")
-                    except requests.exceptions.RequestException as e:
-                        st.error(f"Error analyzing document: {e}")
-
-    template_type = st.selectbox(
-        "Document Type",
-        ["gst_show_cause_reply", "nda", "employment_contract", "lease_deed", "commercial_agreement"]
-    )
-
-    st.text_input("Client Name", key="client_name")
-    st.text_input("Opposite Party", key="opposite_party")
-    st.text_area("Facts / Instructions", height=180, key="facts")
-    tone = st.selectbox("Tone", ["Formal", "Persuasive", "Firm"])
-
-    if st.button("✨ Generate Draft", type="primary"):
-        payload = {
-            "template_type": template_type,
-            "client_name": st.session_state["client_name"],
-            "opposite_party": st.session_state["opposite_party"],
-            "facts": st.session_state["facts"],
-            "tone": tone
-        }
-        try:
-            res = requests.post(f"{API_URL}/generate", json=payload, timeout=600)
-            if res.status_code == 200:
-                data = res.json()
-                st.session_state["warnings"] = data.get("warnings", [])
-                force_refresh_editor(data["content"])
-            else:
-                st.error(f"Draft generation failed: {res.text}")
-        except requests.exceptions.RequestException as e:
-            st.error(f"Error generating draft: {e}")
 
 # ===================== DOCUMENT INTELLIGENCE =====================
 if st.session_state.get("doc_analysis"):
@@ -234,8 +138,295 @@ if st.session_state.get("doc_analysis"):
 
         if st.button("🪄 Use Key Points as Facts"):
             st.session_state.populate_from_doc = True
-            st.toast("Populating sidebar fields…")
             st.rerun()
+
+
+
+
+
+
+# ===================== STATE =====================
+defaults = {
+    "draft": "",
+    "warnings": [],
+    "case_law_suggestions": "",
+    "doc_analysis": None,
+    "client_name": "",
+    "opposite_party": "",
+    "facts": "",
+    "document_title": "",
+    "doc_hash": None,
+}
+
+
+if "populate_from_doc" not in st.session_state:
+    st.session_state["populate_from_doc"] = False
+
+for k, v in defaults.items():
+    if k not in st.session_state:
+        st.session_state[k] = v
+
+# ===================== HELPERS =====================
+def force_refresh_editor(new_text=""):
+    st.session_state["draft"] = new_text
+    st.rerun()
+
+def apply_global_refinement(instruction):
+    if not st.session_state["draft"]:
+        st.toast("⚠️ Editor is empty")
+        return
+    try:
+        res = requests.post(
+            f"{API_URL}/refine",
+            json={"selected_text": st.session_state["draft"], "instruction": instruction},
+            timeout=300
+        )
+        if res.status_code == 200:
+            force_refresh_editor(res.json()["refined_content"])
+        else:
+            st.error(f"Refinement failed: {res.text}")
+    except requests.exceptions.RequestException as e:
+        st.error(f"Error: {e}")
+
+def fetch_case_laws():
+    if not st.session_state["draft"]:
+        return
+    try:
+        res = requests.post(
+            f"{API_URL}/suggest-cases",
+            json={"content": st.session_state["draft"]},
+            timeout=300
+        )
+        if res.status_code == 200:
+            st.session_state["case_law_suggestions"] = res.json().get("suggestions", "")
+            st.rerun()
+        else:
+            st.error(f"Case law fetch failed: {res.text}")
+    except requests.exceptions.RequestException as e:
+        st.error(f"Error: {e}")
+
+
+def get_available_documents():
+    base_dir = "index_data"
+    docs_map = {}
+
+    if not os.path.exists(base_dir):
+        return docs_map
+
+    for doc_hash in os.listdir(base_dir):
+        doc_dir = os.path.join(base_dir, doc_hash)
+
+        if not os.path.isdir(doc_dir):
+            continue
+
+        metadata_path = os.path.join(doc_dir, "doc_metadata.pkl")
+        if not os.path.exists(metadata_path):
+            continue
+
+        try:
+            with open(metadata_path, "rb") as f:
+                data = pickle.load(f)
+
+            file_name = data.get("file_name")
+            if file_name:
+                docs_map[file_name] = doc_hash
+
+        except Exception:
+            continue
+
+    return docs_map
+
+
+def load_doc_analysis_by_hash(doc_hash):
+    folder = os.path.join("index_data", doc_hash)
+    doc_meta_path = os.path.join(folder, "doc_metadata.pkl")
+    chunk_meta_path = os.path.join(folder, "chunks_metadata.pkl")
+
+    if not os.path.exists(doc_meta_path) or not os.path.exists(chunk_meta_path):
+        return None
+
+    with open(doc_meta_path, "rb") as f:
+        doc_meta = pickle.load(f)
+
+    with open(chunk_meta_path, "rb") as f:
+        chunks = pickle.load(f)
+
+    full_text = "\n".join(c["text"] for c in chunks)
+
+    # Simple heuristics for client/opposite
+    client, opposite = "", ""
+    for line in full_text.splitlines():
+        if "versus" in line.lower() or "vs." in line.lower():
+            parts = line.lower().replace("vs.", "vs").split("vs")
+            if len(parts) == 2:
+                client = parts[0].strip().title()
+                opposite = parts[1].strip().title()
+                break
+
+    return {
+        "client_name": doc_meta.get("addressed_to", client),  # fallback
+        "opposite_party": doc_meta.get("issuing_authority_or_court", opposite),  # fallback
+        "facts": full_text,  # store FULL text here, not just first 3000 chars
+        "document_metadata": doc_meta,
+        "full_text": full_text  # NEW: store full text for heuristics
+    }
+
+def extract_parties(analysis):
+    meta = analysis.get("document_metadata", {})
+    full_text = analysis.get("full_text", "")
+
+    client = meta.get("addressed_to", "").strip()
+    opposite = meta.get("issuing_authority_or_court", "").strip()
+
+    if not client or not opposite:
+        # Check first 30 lines for keywords
+        lines = full_text.splitlines()[:30]
+        for line in lines:
+            line = line.strip()
+            if not client and (line.lower().startswith("to:") or "plaintiff" in line.lower()):
+                client = line.split(":", 1)[-1].strip().title()
+            if not opposite and (line.lower().startswith("from:") or line.lower().startswith("by:") or "defendant" in line.lower() or "respondent" in line.lower()):
+                opposite = line.split(":", 1)[-1].strip().title()
+
+    if not client or not opposite:
+        # fallback vs/versus heuristic anywhere in the text
+        for line in full_text.splitlines():
+            if "vs" in line.lower() or "versus" in line.lower():
+                parts = line.lower().replace("vs.", "vs").split("vs")
+                if len(parts) == 2:
+                    client = client or parts[0].strip().title()
+                    opposite = opposite or parts[1].strip().title()
+                    break
+
+    return client, opposite
+
+
+
+# ===================== LAYOUT =====================
+col_left, col_center, col_right = st.columns([1, 2, 1])
+
+# ===================== LEFT =====================
+with col_left:
+    st.header("1. Setup")
+
+    docs_map = get_available_documents()
+    selected_filename = st.selectbox("📄 Select Document", [""] + list(docs_map.keys()))
+
+    if selected_filename:
+        doc_hash = docs_map[selected_filename]
+        if st.session_state.get("doc_hash") != doc_hash:
+            st.session_state["doc_hash"] = doc_hash
+
+            # Try to load saved analysis first
+            analysis = None
+            analysis_path = os.path.join("index_data", doc_hash, "doc_analysis.json")
+            if os.path.exists(analysis_path):
+                with open(analysis_path, "r") as f:
+                    analysis = json.load(f)
+
+            # fallback: load from saved chunks & metadata
+            if not analysis:
+                folder = os.path.join("index_data", doc_hash)
+                doc_meta_path = os.path.join(folder, "doc_metadata.pkl")
+                chunk_meta_path = os.path.join(folder, "chunks_metadata.pkl")
+                if os.path.exists(doc_meta_path) and os.path.exists(chunk_meta_path):
+                    with open(doc_meta_path, "rb") as f:
+                        doc_meta = pickle.load(f)
+                    with open(chunk_meta_path, "rb") as f:
+                        chunks = pickle.load(f)
+                    full_text = "\n".join(c["text"] for c in chunks)
+                    analysis = {
+                        "document_metadata": doc_meta,
+                        "full_text": full_text
+                    }
+
+            if analysis:
+                st.session_state["client_name"], st.session_state["opposite_party"] = extract_parties(analysis)
+
+                key_points = analysis.get("key_points_summary", [])
+                st.session_state["facts"] = "\n".join(key_points) if key_points else analysis.get("full_text", "")
+
+                st.rerun()
+
+
+
+
+    # ===================== AUTO-POPULATE FROM DOCUMENT =====================
+    if st.session_state.get("populate_from_doc"):
+    # Load document
+        if st.session_state.get("doc_hash"):
+            d = load_doc_analysis_by_hash(st.session_state["doc_hash"])
+        else:
+            d = st.session_state.get("doc_analysis")
+
+        if d:
+            meta = d.get("document_metadata", {})
+
+            # First try metadata
+            st.session_state["client_name"] = meta.get("addressed_to", "")
+            st.session_state["opposite_party"] = meta.get("issuing_authority_or_court", "")
+
+            # Use key points for facts if available, else full text
+            key_points = d.get("key_points_summary", [])
+            if key_points:
+                st.session_state["facts"] = "\n".join(key_points)
+            else:
+                st.session_state["facts"] = d.get("full_text", "")
+
+            # 🔹 Heuristic fallback using FULL TEXT
+            if not st.session_state["client_name"] or not st.session_state["opposite_party"]:
+                for line in d.get("full_text", "").splitlines():
+                    if "vs" in line.lower() or "versus" in line.lower():
+                        parts = line.lower().replace("vs.", "vs").split("vs")
+                        if len(parts) == 2:
+                            st.session_state["client_name"] = st.session_state["client_name"] or parts[0].strip().title()
+                            st.session_state["opposite_party"] = st.session_state["opposite_party"] or parts[1].strip().title()
+                            break
+
+        st.session_state["populate_from_doc"] = False
+
+
+
+
+    # ===================== SIDEBAR UI =====================
+    draft_mode = st.radio("Source", ["New Draft", "Upload Template (RAG)"], horizontal=True)
+
+    if draft_mode == "Upload Template (RAG)":
+        template_file = st.file_uploader("Upload Template (for Drafting only)", type=["docx", "pdf", "txt"], key="template")
+        if template_file:
+            template_text = read_file_content(template_file)
+            st.success(f"Template loaded ({len(template_text)} chars)")
+
+    template_type = st.selectbox(
+        "Document Type",
+        ["gst_show_cause_reply", "nda", "employment_contract", "lease_deed", "commercial_agreement"]
+    )
+
+    st.text_input("Client Name", key="client_name")
+    st.text_input("Opposite Party", key="opposite_party")
+    st.text_area("Facts / Instructions", height=180, key="facts")
+    tone = st.selectbox("Tone", ["Formal", "Persuasive", "Firm"])
+
+    if st.button("✨ Generate Draft", type="primary"):
+        payload = {
+            "template_type": template_type,
+            "client_name": st.session_state["client_name"],
+            "opposite_party": st.session_state["opposite_party"],
+            "facts": st.session_state["facts"],
+            "tone": tone,
+            "doc_hash": st.session_state.get("doc_hash")
+        }
+
+        try:
+            res = requests.post(f"{API_URL}/generate", json=payload, timeout=600)
+            if res.status_code == 200:
+                data = res.json()
+                st.session_state["warnings"] = data.get("warnings", [])
+                force_refresh_editor(data["content"])
+            else:
+                st.error(f"Draft generation failed: {res.text}")
+        except requests.exceptions.RequestException as e:
+            st.error(f"Error generating draft: {e}")
 
 
 # ===================== CENTER =====================
