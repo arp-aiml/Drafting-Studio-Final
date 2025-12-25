@@ -141,10 +141,6 @@ if st.session_state.get("doc_analysis"):
             st.rerun()
 
 
-
-
-
-
 # ===================== STATE =====================
 defaults = {
     "draft": "",
@@ -272,32 +268,83 @@ def load_doc_analysis_by_hash(doc_hash):
     }
 
 def extract_parties(analysis):
+    """
+    Extract client name & opposite party from Indian legal documents
+    using layered heuristics (metadata → structure → roles → vs).
+    """
+
     meta = analysis.get("document_metadata", {})
     full_text = analysis.get("full_text", "")
 
+    # ---------- 0️⃣ Metadata (best signal if present)
     client = meta.get("addressed_to", "").strip()
     opposite = meta.get("issuing_authority_or_court", "").strip()
 
-    if not client or not opposite:
-        # Check first 30 lines for keywords
-        lines = full_text.splitlines()[:30]
-        for line in lines:
-            line = line.strip()
-            if not client and (line.lower().startswith("to:") or "plaintiff" in line.lower()):
-                client = line.split(":", 1)[-1].strip().title()
-            if not opposite and (line.lower().startswith("from:") or line.lower().startswith("by:") or "defendant" in line.lower() or "respondent" in line.lower()):
-                opposite = line.split(":", 1)[-1].strip().title()
+    lines = [l.strip() for l in full_text.splitlines() if l.strip()]
 
-    if not client or not opposite:
-        # fallback vs/versus heuristic anywhere in the text
-        for line in full_text.splitlines():
-            if "vs" in line.lower() or "versus" in line.lower():
-                parts = line.lower().replace("vs.", "vs").split("vs")
-                if len(parts) == 2:
-                    client = client or parts[0].strip().title()
-                    opposite = opposite or parts[1].strip().title()
+    # ---------- 1️⃣ First 40 lines → role keywords
+    CLIENT_KEYWORDS = [
+        "petitioner", "plaintiff", "applicant", "complainant", "to:"
+    ]
+
+    OPPOSITE_KEYWORDS = [
+        "respondent", "defendant", "accused", "opposite party", "from:", "by:"
+    ]
+
+    for line in lines[:40]:
+        low = line.lower()
+
+        if not client:
+            for kw in CLIENT_KEYWORDS:
+                if kw in low:
+                    client = line.split(":", 1)[-1].strip().title()
                     break
 
+        if not opposite:
+            for kw in OPPOSITE_KEYWORDS:
+                if kw in low:
+                    opposite = line.split(":", 1)[-1].strip().title()
+                    break
+
+        if client and opposite:
+            return client, opposite
+
+    # ---------- 2️⃣ "IN THE MATTER OF" pattern (very common in India)
+    for i, line in enumerate(lines[:25]):
+        if "in the matter of" in line.lower():
+            if i + 1 < len(lines):
+                client = client or lines[i + 1].title()
+            if i + 3 < len(lines):
+                opposite = opposite or lines[i + 3].title()
+            return client, opposite
+
+    # ---------- 3️⃣ Structured format:
+    # A
+    # ... Petitioner
+    # Versus
+    # B
+    # ... Respondent
+    for i in range(len(lines) - 3):
+        if "petitioner" in lines[i + 1].lower():
+            client = client or lines[i].title()
+        if "respondent" in lines[i + 1].lower():
+            opposite = opposite or lines[i].title()
+
+        if client and opposite:
+            return client, opposite
+
+    # ---------- 4️⃣ vs / versus fallback (anywhere in document)
+    for line in lines:
+        low = line.lower()
+        if " vs " in low or " versus " in low:
+            sep = " versus " if " versus " in low else " vs "
+            parts = low.split(sep)
+            if len(parts) == 2:
+                client = client or parts[0].strip().title()
+                opposite = opposite or parts[1].strip().title()
+                return client, opposite
+
+    # ---------- 5️⃣ Last resort: return whatever we managed
     return client, opposite
 
 
