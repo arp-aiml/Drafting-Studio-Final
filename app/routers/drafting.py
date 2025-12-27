@@ -113,3 +113,29 @@ async def generate_draft_endpoint(data: DraftRequest = Body(...)):
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+    
+
+@router.post("/export/word")
+async def download_word(request: ExportRequest):
+    file_stream = export_to_word(request.content)
+    headers = {'Content-Disposition': 'attachment; filename="Draft.docx"'}
+    return Response(content=file_stream.getvalue(), media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document", headers=headers)
+
+@router.post("/export/pdf")
+async def download_pdf(request: ExportRequest):
+    file_stream = export_to_pdf(request.content)
+    headers = {'Content-Disposition': 'attachment; filename="Draft.pdf"'}
+    return Response(content=file_stream.getvalue(), media_type="application/pdf", headers=headers)
+
+@router.post("/send-email")
+async def email_draft(request: EmailRequest):
+    try:
+        await send_draft_email(
+            request.recipient,
+            request.subject,
+            request.content
+        )
+        return {"status": "success"}
+    except Exception as e:
+        print("EMAIL ERROR:", str(e))  # 👈 ADD THIS
+        raise HTTPException(status_code=500, detail=str(e))

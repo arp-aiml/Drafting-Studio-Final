@@ -398,43 +398,6 @@ with col_left:
 
 
 
-    # ===================== AUTO-POPULATE FROM DOCUMENT =====================
-    if st.session_state.get("populate_from_doc"):
-    # Load document
-        if st.session_state.get("doc_hash"):
-            d = load_doc_analysis_by_hash(st.session_state["doc_hash"])
-        else:
-            d = st.session_state.get("doc_analysis")
-
-        if d:
-            meta = d.get("document_metadata", {})
-
-            # First try metadata
-            st.session_state["client_name"] = meta.get("addressed_to", "")
-            st.session_state["opposite_party"] = meta.get("issuing_authority_or_court", "")
-
-            # Use key points for facts if available, else full text
-            key_points = d.get("key_points_summary", [])
-            if key_points:
-                st.session_state["facts"] = "\n".join(key_points)
-            else:
-                st.session_state["facts"] = d.get("full_text", "")
-
-            # 🔹 Heuristic fallback using FULL TEXT
-            if not st.session_state["client_name"] or not st.session_state["opposite_party"]:
-                for line in d.get("full_text", "").splitlines():
-                    if "vs" in line.lower() or "versus" in line.lower():
-                        parts = line.lower().replace("vs.", "vs").split("vs")
-                        if len(parts) == 2:
-                            st.session_state["client_name"] = st.session_state["client_name"] or parts[0].strip().title()
-                            st.session_state["opposite_party"] = st.session_state["opposite_party"] or parts[1].strip().title()
-                            break
-
-        st.session_state["populate_from_doc"] = False
-
-
-
-
     # ===================== SIDEBAR UI =====================
     draft_mode = st.radio("Source", ["New Draft", "Upload Template (RAG)"], horizontal=True)
 
@@ -495,18 +458,64 @@ with col_center:
     if draft_content != st.session_state["draft"]:
         st.session_state["draft"] = draft_content
 
-# ===================== RIGHT =====================
+    c1, c2, c3 = st.columns(3)
+    with c1: 
+        if st.button("💾 Save"): st.toast("Draft Saved!")
+    with c2: 
+        if st.button("📄 Word"):
+             res = requests.post(f"{API_URL}/export/word", json={"content": st.session_state['draft']})
+             st.download_button("Download Docx", res.content, "Draft.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+    with c3:
+        if st.button("📕 PDF"):
+             res = requests.post(f"{API_URL}/export/pdf", json={"content": st.session_state['draft']})
+             st.download_button("Download PDF", res.content, "Draft.pdf", "application/pdf")
+
+# --- 3. RIGHT SIDEBAR: TOOLS ---
 with col_right:
     st.header("⚡ Tools")
-    if st.button("💪 Stronger"):
-        apply_global_refinement("Make the legal language stronger.")
-    if st.button("🤝 Polite"):
-        apply_global_refinement("Make the tone more polite.")
-    if st.button("📉 Simplify"):
-        apply_global_refinement("Simplify the language.")
-    if st.button("⚖️ Legalese"):
-        apply_global_refinement("Correct legal terminology.")
+    
+    st.markdown("### ✨ AI Refinement")
+    col_r1, col_r2 = st.columns(2)
+    with col_r1:
+        if st.button("💪 Stronger"):
+            apply_global_refinement("Make the legal language stronger and more protective.")
+    with col_r2:
+        if st.button("🤝 Polite"):
+            apply_global_refinement("Make the tone more collaborative and polite.")
+            
+    col_r3, col_r4 = st.columns(2)
+    with col_r3:
+        if st.button("📉 Simplify"):
+            apply_global_refinement("Simplify the language for a layperson.")
+    with col_r4:
+        if st.button("⚖️ Legalese"):
+            apply_global_refinement("Correct any improper legal terminology.")
 
     st.divider()
+
+    # UPDATED BUTTON LABEL
+    st.markdown("### 📚 Legal Research")
     if st.button("🔍 Suggest Laws & Cases"):
-        fetch_case_laws()
+        fetch_case_laws() 
+
+    st.divider()
+    
+    st.markdown("### 📌 Append Clause")
+    if st.button("🛡️ Indemnity"):
+        force_refresh_editor(st.session_state['draft'] + "\n\n### Indemnity\nThe Party shall indemnify, defend, and hold harmless the other Party from all claims, losses, and damages arising from breach of this Agreement.")
+        
+    if st.button("🛑 Termination"):
+        force_refresh_editor(st.session_state['draft'] + "\n\n### Termination\nEither Party may terminate this Agreement with 30 days' prior written notice to the other Party.")
+        
+    if st.button("⚖️ Dispute Resolution"):
+        force_refresh_editor(st.session_state['draft'] + "\n\n### Dispute Resolution\nAny dispute arising out of this Agreement shall be referred to arbitration in accordance with the Arbitration and Conciliation Act, 1996.")
+
+    st.divider()
+    
+    with st.expander("📧 Email Client"):
+        recipient = st.text_input("To:", key="email_to")
+        subj = st.text_input("Subject:", "Legal Draft", key="email_sub")
+        if st.button("Send Email"):
+             if recipient:
+                requests.post(f"{API_URL}/send-email", json={"recipient": recipient, "subject": subj, "content": st.session_state['draft']})
+                st.success("Email Sent!")

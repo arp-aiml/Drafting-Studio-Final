@@ -1,142 +1,75 @@
 def build_legal_prompt(data, web_context):
     """
-    Constructs the prompt for a Senior Legal Drafting AI.
-    Output Format: Clean Markdown (No HTML).
+    Plain-text professional Indian legal drafting prompt
+    with mandatory TO / SUBJECT structure.
     """
 
-    # =============================
-    # 1️⃣ SYSTEM PERSONA
-    # =============================
-    system_persona = """
-ROLE: Senior Advocate (Supreme Court of India).
-TASK: Draft a professional legal document.
-FORMAT: Markdown only.
-- Use '###' for Section Headers.
-- Use '**' for Bold text.
-- Use '>' for Blockquotes (citations).
-
-CRITICAL INSTRUCTION:
-You MUST use the exact Section Headers defined below.
-Do NOT skip or merge sections.
-"""
-
-    # =============================
-    # 2️⃣ SAFE CONTEXT RESOLUTION
-    # =============================
     if isinstance(web_context, str) and web_context.strip():
-        if "STATUTORY_FALLBACK" in web_context:
-            context_block = (
-                "Standard GST statutory provisions and settled judicial principles. "
-                "Rely on Sections such as Section 16 (ITC), Sections 73/74 (Demand), "
-                "limitation provisions, and principles of natural justice."
-            )
-        else:
-            context_block = web_context
+        context_block = web_context
     else:
         context_block = (
-            "No external case law retrieved. "
-            "Apply settled GST statutory provisions and principles of law."
+            "Apply relevant statutory provisions, settled principles of law, "
+            "and principles of natural justice applicable to the subject matter."
         )
 
-    # =============================
-    # 3️⃣ TEMPLATES (NOW SAFE)
-    # =============================
-    templates = {
-        "gst_show_cause_reply": f"""
-**DOC:** Reply to GST Show Cause Notice  
-**CLIENT (Noticee):** {data.client_name}  
-**AUTHORITY (Issuing Authority):** {data.opposite_party}  
+    return f"""
+You are a Senior Advocate practising before the Supreme Court of India.
 
-**NOTICE FACTS / ALLEGATIONS (AS RECEIVED):**  
-{data.facts}
+Draft a formal Indian legal document strictly in plain text format.
+Do not use bullet points, numbering, markdown, asterisks, or headings.
+Write in continuous professional legal paragraphs.
 
-**LEGAL RESEARCH CONTEXT (STATUTES / CASE LAW):**  
+The draft must follow the exact structural format used in real legal notices
+and replies issued by Indian law offices.
+
+DOCUMENT STRUCTURE (MANDATORY):
+
+The draft must begin exactly in the following manner:
+
+To,
+{data.opposite_party}
+[Complete Postal Address]
+
+Date: [Insert Date]
+
+Subject: [Concise subject describing the nature of the reply / proceedings]
+
+Sir / Madam,
+
+BODY OF THE DOCUMENT:
+
+Begin by identifying the client {data.client_name}, the authority or party addressed,
+and the reference to the notice, communication, or proceedings to which this document
+is a reply.
+
+Set out the factual background in clear chronological paragraphs.
+
+Thereafter, respond to the allegations, claims, or issues raised by the opposite party
+with proper factual explanations, legal submissions, and statutory support.
+
+Apply the following legal context where relevant:
+
 {context_block}
 
-========================
-STRICT STRUCTURE — DO NOT CHANGE
-========================
+Maintain a formal Indian legal drafting tone using expressions such as
+"it is respectfully submitted", "without prejudice", "it is denied",
+"it is submitted that", and similar professional language.
 
-### 1. Introduction of the Noticee
-Introduce the Noticee including:
-• Nature of business  
-• GST registration details  
-• Jurisdiction  
-• Compliance history  
+Avoid informal language, lists, or formatting.
 
----
+CONCLUSION AND CLOSING:
 
-### 2. Brief Summary of the Notice & Issues Raised
-Summarise:
-• Nature of proceedings  
-• Period involved  
-• Allegations  
-• Amount demanded (if any)  
+Conclude with a paragraph clearly stating the reliefs sought, requests for
+withdrawal or dropping of proceedings, and reservation of rights.
 
----
+The document must end exactly in the following format:
 
-### 3. Point-wise Reply to Allegations
-For **each allegation**:
-• Quote/paraphrase allegation  
-• Factual rebuttal  
-• Legal rebuttal  
-• Relevant GST provisions  
+Yours faithfully,
 
----
+For {data.client_name}
 
-### 4. Legality and Sustainability of the Demand
-Examine:
-• Jurisdiction  
-• Limitation  
-• Wrong invocation of sections  
-• Violation of natural justice  
-• Vague or mechanical notice  
+Authorized Signatory
 
-Clearly conclude whether the demand is:
-• Unsustainable in law, OR  
-• Procedurally defective, OR  
-• Requires reconsideration  
-
----
-
-### 5. Closing Submissions & Prayer
-Pray for:
-• Dropping of proceedings  
-• Personal hearing  
-• Reasoned order  
-
-========================
-COMPLIANCE RULES
-========================
-• DO NOT skip sections  
-• DO NOT merge sections  
-• Maintain formal Indian legal drafting style  
-""",
-
-        "gst_appeal_draft": f"""
-**DOC:** GST Appeal (Form GST APL-01)
-### Statement of Facts
-### Grounds of Appeal
-### Relief
-### Verification
-""",
-    }
-
-    # =============================
-    # 4️⃣ TEMPLATE SELECTION
-    # =============================
-    specific_instr = templates.get(
-        data.template_type,
-        f"Draft a formal legal document regarding: {data.facts}"
-    )
-
-    # =============================
-    # 5️⃣ FINAL PROMPT
-    # =============================
-    return f"""
-{system_persona}
-{specific_instr}
-
-**TONE:** {data.tone}  
-**PARTIES:** {data.client_name} vs {data.opposite_party}
+Ensure the final output appears like a real legal draft capable of being
+printed, signed, and issued without any modification.
 """
