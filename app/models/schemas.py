@@ -21,3 +21,13 @@ class EmailRequest(BaseModel):
     recipient: EmailStr
     subject: str
     content: str
+
+
+class DraftRequest(BaseModel):
+    template_type: str | None = None
+    client_name: str
+    opposite_party: str
+    facts: str
+    tone: str | None = "formal"
+    web_context: str | None = None
+    language: str = "english"   # allowed: english, hindi, bilingual

@@ -11,7 +11,7 @@ from app.utils.retrieval import retrieve_top_k_chunks
 load_dotenv()
 
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-MODEL_NAME = "gpt-4o-mini"
+MODEL_NAME = "gpt-5-nano"
 
 MAX_LLM_CHARS = 6000
 
@@ -73,16 +73,18 @@ REQUIRED OUTPUT (STRICT JSON ONLY)
     "document_type": string | null,
     "issuing_authority_or_court": string | null,
     "addressed_to": string | null,
+
+    "primary_parties": {
+      "client_or_noticee": string | null,
+      "opposite_party_or_notifier": string | null
+    },
+
     "other_parties_involved": [string]
   },
 
-  "key_points_summary": [
-    string
-  ],
+  "key_points_summary": [string],
 
-  "defence_preparation_checklist": [
-    string
-  ],
+  "defence_preparation_checklist": [string],
 
   "legality_assessment": {
     "is_notice_legally_valid": true | false | null,
@@ -103,13 +105,35 @@ REQUIRED OUTPUT (STRICT JSON ONLY)
 }
 
 ----------------------------------
+PARTY IDENTIFICATION RULES
+----------------------------------
+
+- Prefer explicit labels:
+  Petitioner / Respondent
+  Plaintiff / Defendant
+  Complainant / Accused
+  Appellant / Respondent
+  Claimant / Opposite Party
+  Noticee / Notice Issuer
+
+- If not found, detect formats:
+  "A vs B"
+  "A versus B"
+  "A v. B"
+  "IN THE MATTER OF: A ... VERSUS ... B"
+
+- If still unclear:
+  - person receiving notice → client_or_noticee
+  - person issuing notice → opposite_party_or_notifier
+
+----------------------------------
 ANALYSIS RULES
 ----------------------------------
 - Use the provided document + embedded context
 - If legality is unclear → risk MUST be "medium"
-- If rights, jurisdiction, procedure, or authority are questionable → flag defects
 - Do NOT write explanations outside JSON
 """
+
 
         # -----------------------------
         # 3️⃣ LLM CALL
@@ -122,7 +146,6 @@ ANALYSIS RULES
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": f"DOCUMENT CONTENT:\n{context}"}
                 ],
-                temperature=0
             )
             raw_output = response.choices[0].message.content.strip()
         except Exception as e:

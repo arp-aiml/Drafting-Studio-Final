@@ -6,7 +6,7 @@ import streamlit as st
 import requests
 from app.utils.file_handler import read_file_content
 
-API_URL = "http://127.0.0.1:8000/draft"
+API_URL = "http://127.0.0.1:8002/draft"
 INDEX_DATA_DIR = "index_data"
 METADATA_FILE = os.path.join(INDEX_DATA_DIR, "metadata.pkl")
 
@@ -63,6 +63,19 @@ if st.session_state.get("doc_analysis"):
     d = st.session_state["doc_analysis"]
 
     meta = d.get("document_metadata", {})
+    primary = meta.get("primary_parties", {})
+
+    # Prefer structured extraction first
+    client_ai = (primary.get("client_or_noticee") or "").strip()
+    opposite_ai = (primary.get("opposite_party_or_notifier") or "").strip()
+
+    # Save if available
+    if client_ai:
+        st.session_state["client_name"] = client_ai
+
+    if opposite_ai:
+        st.session_state["opposite_party"] = opposite_ai
+
     key_points = d.get("key_points_summary", [])
     defence = d.get("defence_preparation_checklist", [])
     legality = d.get("legality_assessment", {})
@@ -416,14 +429,32 @@ with col_left:
     st.text_input("Opposite Party", key="opposite_party")
     st.text_area("Facts / Instructions", height=180, key="facts")
     tone = st.selectbox("Tone", ["Formal", "Persuasive", "Firm"])
+    language = st.selectbox(
+    "Draft Language",
+    ["English", "Hindi", "Bilingual (English + Hindi)"],
+    index=0,
+    key="language"
+)
+
 
     if st.button("✨ Generate Draft", type="primary"):
+
+    # Normalize language values for backend
+        lang_value = st.session_state["language"]
+        if "Bilingual" in lang_value:
+            lang = "bilingual"
+        elif "Hindi" in lang_value:
+            lang = "hindi"
+        else:
+            lang = "english"
+
         payload = {
             "template_type": template_type,
             "client_name": st.session_state["client_name"],
             "opposite_party": st.session_state["opposite_party"],
             "facts": st.session_state["facts"],
             "tone": tone,
+            "language": lang,  # <<<<<<<<<<<<<<<<<< Added
             "doc_hash": st.session_state.get("doc_hash")
         }
 

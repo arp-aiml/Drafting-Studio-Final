@@ -1,33 +1,76 @@
-def build_legal_prompt(data, web_context):
+# prompts.py
+
+def build_legal_prompt(data, web_context=None):
     """
-    Plain-text professional Indian legal drafting prompt
-    with mandatory TO / SUBJECT structure.
+    Builds a professional Indian legal drafting prompt with:
+    - strict legal document structure
+    - language control (English / Hindi / Bilingual)
+    - tone conditioning
     """
 
+    # ---------- Safe defaults to avoid None → API crash ----------
+    client_name = getattr(data, "client_name", "") or ""
+    opposite_party = getattr(data, "opposite_party", "") or ""
+    facts = getattr(data, "facts", "") or ""
+    tone = getattr(data, "tone", "formal") or "formal"
+    language = getattr(data, "language", "english") or "english"
+
+    # ---------- Context Block ----------
     if isinstance(web_context, str) and web_context.strip():
-        context_block = web_context
+        context_block = web_context.strip()
     else:
         context_block = (
             "Apply relevant statutory provisions, settled principles of law, "
-            "and principles of natural justice applicable to the subject matter."
+            "binding precedents of the Supreme Court of India and High Courts, "
+            "and principles of natural justice applicable to the present matter."
         )
 
-    return f"""
-You are a Senior Advocate practising before the Supreme Court of India.
+    # ---------- Language instruction ----------
+    language = language.lower().strip()
 
-Draft a formal Indian legal document strictly in plain text format.
-Do not use bullet points, numbering, markdown, asterisks, or headings.
-Write in continuous professional legal paragraphs.
+    if language == "hindi":
+        language_instruction = (
+            "Draft the entire document in formal Legal Hindi using Devanagari script. "
+            "Do not mix English words unless they are statutory or proper nouns."
+        )
+    elif language == "bilingual":
+        language_instruction = (
+            "Draft the document in bilingual format. "
+            "For every paragraph, first write it in English, immediately followed by the same paragraph "
+            "in formal Legal Hindi using Devanagari script. "
+            "Ensure meaning equivalence and do not use transliteration (no Hinglish)."
+        )
+    else:
+        language_instruction = (
+            "Draft the entire document in formal Indian English appropriate for legal correspondence."
+        )
 
-The draft must follow the exact structural format used in real legal notices
-and replies issued by Indian law offices.
+    # ---------- Tone Instruction ----------
+    tone = tone.lower()
+    if tone.startswith("persu"):
+        tone_instruction = "Maintain a persuasive professional tone."
+    elif tone.startswith("firm"):
+        tone_instruction = "Maintain a firm, assertive legal tone."
+    else:
+        tone_instruction = "Maintain a formal, neutral legal tone."
 
-DOCUMENT STRUCTURE (MANDATORY):
+    # ---------- Final Prompt ----------
+    prompt = f"""
+You are a Senior Advocate practising before the Supreme Court of India and various High Courts.
 
-The draft must begin exactly in the following manner:
+{language_instruction}
+{tone_instruction}
+
+You are required to draft a formal legal document strictly in plain text format.
+Do not use bullet points, numbering, markdown, headings, asterisks, or section labels.
+Write only continuous professional legal paragraphs.
+
+The draft must follow the structural format used in real Indian legal notices and replies.
+
+The draft must begin exactly as follows:
 
 To,
-{data.opposite_party}
+{opposite_party}
 [Complete Postal Address]
 
 Date: [Insert Date]
@@ -38,38 +81,37 @@ Sir / Madam,
 
 BODY OF THE DOCUMENT:
 
-Begin by identifying the client {data.client_name}, the authority or party addressed,
-and the reference to the notice, communication, or proceedings to which this document
-is a reply.
+Identify the client {client_name} and the authority or party addressed.
+Refer to the notice, order, letter, or communication that is being replied to.
 
-Set out the factual background in clear chronological paragraphs.
+Narrate the facts in clear chronological sequence based on the following facts/instructions:
+{facts}
 
-Thereafter, respond to the allegations, claims, or issues raised by the opposite party
-with proper factual explanations, legal submissions, and statutory support.
+Respond to allegations, claims, and assertions made by the opposite party by stating what is admitted,
+what is denied, and on what legal and factual grounds it is denied.
 
-Apply the following legal context where relevant:
-
+Apply legal reasoning based on the following context where relevant:
 {context_block}
 
-Maintain a formal Indian legal drafting tone using expressions such as
-"it is respectfully submitted", "without prejudice", "it is denied",
-"it is submitted that", and similar professional language.
+Use standard Indian legal drafting terminology including expressions such as
+"it is respectfully submitted", "without prejudice", "it is denied", "it is submitted that".
 
-Avoid informal language, lists, or formatting.
+Do NOT invent facts, dates, numbers, or case laws beyond what is provided.
+Do NOT assume attachments or annexures unless explicitly stated.
 
 CONCLUSION AND CLOSING:
 
-Conclude with a paragraph clearly stating the reliefs sought, requests for
-withdrawal or dropping of proceedings, and reservation of rights.
+Conclude with a clear statement of reliefs sought and reservation of rights and remedies.
 
-The document must end exactly in the following format:
+The draft must end exactly as follows:
 
 Yours faithfully,
 
-For {data.client_name}
+For {client_name}
 
 Authorized Signatory
 
-Ensure the final output appears like a real legal draft capable of being
-printed, signed, and issued without any modification.
+Ensure the final output reads like a real legal document that can be printed, signed, and issued without modification.
 """
+
+    return prompt.strip()
